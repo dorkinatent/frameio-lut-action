@@ -57,6 +57,10 @@ FRAMEIO_WEBHOOK_SECRET=
 
 # Must be at least 32 characters
 JWT_SECRET=generate-a-long-random-string-here
+
+# Where to store temp downloads, processed files, and LUT registry
+# (created automatically if it doesn't exist)
+TMP_DIR=~/tmp/frameio-lut
 ```
 
 ### 4. Import LUTs
@@ -301,7 +305,7 @@ The service will pick them up and include them in the LUT selection dropdown.
 
 **FFmpeg not found** — install with `brew install ffmpeg` (macOS) or `apt-get install ffmpeg` (Linux). Verify with `ffmpeg -version`.
 
-**Preview page errors** — clear the preview cache: `rm -rf /tmp/archon-lut/processing/previews/`
+**Preview page errors** — clear the preview cache: `rm -rf ~/tmp/frameio-lut/processing/previews/`
 
 **LUTs showing count 0** — run `npm run import:luts luts/` and check with `curl http://localhost:8080/luts`.
 

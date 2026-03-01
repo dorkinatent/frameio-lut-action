@@ -18,10 +18,10 @@ RUN ffmpeg -version && \
     echo "FFmpeg with lut3d filter installed successfully"
 
 # Create app directory and set permissions
-RUN mkdir -p /app /tmp/archon-lut \
+RUN mkdir -p /app /tmp/frameio-lut \
     && addgroup -g 1001 -S nodejs \
     && adduser -S nodejs -u 1001 \
-    && chown -R nodejs:nodejs /app /tmp/archon-lut
+    && chown -R nodejs:nodejs /app /tmp/frameio-lut
 
 WORKDIR /app
 
@@ -48,8 +48,8 @@ RUN export FRAMEIO_WEBHOOK_SECRET="build-time-placeholder-min-32-chars" && \
     echo "Importing LUTs during Docker build..." && \
     npx tsx scripts/importLUTs.ts /app/luts && \
     echo "LUTs imported successfully" && \
-    ls -la /tmp/archon-lut/luts/ && \
-    echo "Registry contains $(grep -c '"id"' /tmp/archon-lut/luts/registry.json) LUTs"
+    ls -la /tmp/frameio-lut/luts/ && \
+    echo "Registry contains $(grep -c '"id"' /tmp/frameio-lut/luts/registry.json) LUTs"
 
 # Remove dev dependencies after build and LUT import
 RUN npm prune --production

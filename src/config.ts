@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import dotenv from 'dotenv';
 import { resolve } from 'path';
+import { homedir } from 'os';
 
 dotenv.config();
 
@@ -10,7 +11,7 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
 
   // File Processing
-  TMP_DIR: z.string().default('/tmp/archon-lut'),
+  TMP_DIR: z.string().default('~/tmp/frameio-lut'),
   MAX_INPUT_GB: z.string().default('25').transform((val) => parseInt(val, 10)),
   FFMPEG_PATH: z.string().default('ffmpeg'),
   
@@ -109,10 +110,13 @@ export const isTest = config.NODE_ENV === 'test';
 // File size limits
 export const MAX_FILE_SIZE_BYTES = config.MAX_INPUT_GB * 1024 * 1024 * 1024;
 
-// Paths
-export const TEMP_UPLOAD_DIR = resolve(config.TMP_DIR, 'uploads');
-export const TEMP_PROCESSING_DIR = resolve(config.TMP_DIR, 'processing');
-export const LUT_STORAGE_DIR = resolve(config.TMP_DIR, 'luts');
+// Paths — expand ~ to the user's home directory
+const tmpBase = config.TMP_DIR.startsWith('~')
+  ? resolve(homedir(), config.TMP_DIR.slice(2))
+  : resolve(config.TMP_DIR);
+export const TEMP_UPLOAD_DIR = resolve(tmpBase, 'uploads');
+export const TEMP_PROCESSING_DIR = resolve(tmpBase, 'processing');
+export const LUT_STORAGE_DIR = resolve(tmpBase, 'luts');
 
 // Export type for use in other modules
 export type Config = z.infer<typeof envSchema>;
