@@ -66,6 +66,9 @@ dump.rdb
 docker-compose.override.yml
 .docker/
 
+# AI agent config
+CLAUDE.md
+
 # Misc
 *.pid
 *.seed
