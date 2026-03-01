@@ -69,12 +69,6 @@ async function promptSelection(items: any[], displayField: string, message: stri
   items.forEach((item, index) => {
     const displayValue = item[displayField] || item.display_name || item.name || 'Unknown';
     console.log(`  ${index + 1}. ${displayValue}`);
-    if (item.id) {
-      console.log(`     ID: ${item.id}`);
-    }
-    if (item.roles && item.roles.length > 0) {
-      console.log(`     Role: ${item.roles.join(', ')}`);
-    }
   });
 
   const rl = readline.createInterface({
@@ -140,8 +134,7 @@ async function getFrameioInfo() {
       process.exit(1);
     }
 
-    console.log(`\n✅ Selected Account: ${selectedAccount.display_name || selectedAccount.name}`);
-    console.log(`   ID: ${selectedAccount.id}`);
+    console.log(`\n✅ Selected: ${selectedAccount.display_name || selectedAccount.name}`);
 
     // Get workspaces for selected account
     console.log(`\n🔍 Fetching workspaces for account "${selectedAccount.display_name || selectedAccount.name}"...`);
@@ -158,8 +151,9 @@ async function getFrameioInfo() {
     }
 
     if (workspaces.length === 0) {
-      console.error('❌ No workspaces found in this account');
-      console.error('   Custom Actions require a workspace. Please create one in Frame.io first.');
+      console.error('❌ You are not a member of any workspace in this account and cannot add a webhook.');
+      console.error('   If you have been invited to a project in this workspace/account,');
+      console.error('   please reach out to your admin for help.');
       process.exit(1);
     }
 
@@ -175,8 +169,7 @@ async function getFrameioInfo() {
       process.exit(1);
     }
 
-    console.log(`\n✅ Selected Workspace: ${selectedWorkspace.name}`);
-    console.log(`   ID: ${selectedWorkspace.id}`);
+    console.log(`\n✅ Selected: ${selectedWorkspace.name}`);
 
     // Save the configuration
     const frameioConfig = {
@@ -192,12 +185,7 @@ async function getFrameioInfo() {
     await writeFile('.frameio-config', JSON.stringify(frameioConfig, null, 2));
     
     console.log('\n💾 Configuration saved to .frameio-config');
-    console.log('\n🎯 Summary:');
-    console.log('===========');
-    console.log(`Account: ${selectedAccount.display_name || selectedAccount.name}`);
-    console.log(`Account ID: ${selectedAccount.id}`);
-    console.log(`Workspace: ${selectedWorkspace.name}`);
-    console.log(`Workspace ID: ${selectedWorkspace.id}`);
+    console.log('\n🎯 Saved: %s / %s', selectedAccount.display_name || selectedAccount.name, selectedWorkspace.name);
     console.log('\n✨ You can now run "npm run register:action" to create your custom action!');
 
   } catch (error: any) {
