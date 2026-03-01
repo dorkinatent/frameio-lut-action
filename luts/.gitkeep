@@ -1,0 +1,9 @@
+# LUTs Directory
+
+This directory contains LUT files that will be included in the Docker image.
+The actual .cube files are not committed to git (see .gitignore).
+
+To add LUTs for deployment:
+1. Copy your .cube files to this directory
+2. Build and deploy the Docker image
+3. The container will automatically import them on startup

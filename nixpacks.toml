@@ -1,0 +1,16 @@
+[phases.setup]
+nixPkgs = ["nodejs_22", "ffmpeg"]
+
+[phases.install]
+cmds = ["npm ci"]
+
+[phases.build]
+cmds = [
+  "FRAMEIO_WEBHOOK_SECRET=build-time-placeholder-min-32-chars FRAMEIO_CLIENT_ID=placeholder FRAMEIO_CLIENT_SECRET=placeholder npm run build",
+  "FRAMEIO_WEBHOOK_SECRET=build-time-placeholder-min-32-chars FRAMEIO_CLIENT_ID=placeholder FRAMEIO_CLIENT_SECRET=placeholder npx tsx scripts/importLUTs.ts luts/",
+  "echo 'LUTs imported successfully'",
+  "ffmpeg -version"
+]
+
+[start]
+cmd = "npm start"

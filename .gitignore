@@ -1,0 +1,73 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+.npm-cache/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Environment files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.production
+
+# Frame.io secrets and local state
+.frameio-token
+*.frameio-token
+.frameio-config
+.custom-action-*
+.webhook-id
+lut-registry.json
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Testing
+coverage/
+.nyc_output/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+.data/
+
+# LUT formats (stray files outside luts/)
+*.look
+*.csp
+
+# Redis
+dump.rdb
+
+# Docker
+docker-compose.override.yml
+.docker/
+
+# Misc
+*.pid
+*.seed
+*.pid.lock
+.cache/
