@@ -1,30 +1,22 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { lutService } from '../src/services/lutService';
+import { LUT_STORAGE_DIR } from '../src/config';
 import { mkdirSync, rmSync, existsSync } from 'fs';
-import { join } from 'path';
 
 describe('LUT Service', () => {
-  const testLUTDir = join(process.cwd(), 'test-luts');
-
   beforeEach(async () => {
-    // Create test directory
-    if (!existsSync(testLUTDir)) {
-      mkdirSync(testLUTDir, { recursive: true });
+    // Wipe the real LUT storage so each test starts clean
+    if (existsSync(LUT_STORAGE_DIR)) {
+      rmSync(LUT_STORAGE_DIR, { recursive: true, force: true });
     }
-    
-    // Set test LUT directory
-    vi.stubEnv('TMP_DIR', testLUTDir);
-    
-    // Initialize service
+    mkdirSync(LUT_STORAGE_DIR, { recursive: true });
+
+    lutService._resetForTesting();
     await lutService.initialize();
   });
 
   afterEach(() => {
-    // Clean up test directory
-    if (existsSync(testLUTDir)) {
-      rmSync(testLUTDir, { recursive: true, force: true });
-    }
-    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
   });
 
   describe('validateLUT', () => {

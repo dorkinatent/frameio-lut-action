@@ -29,6 +29,12 @@ export class LUTService {
     return LUTService.instance;
   }
 
+  /** Reset internal state — for testing only. */
+  _resetForTesting(): void {
+    this.luts.clear();
+    this.initialized = false;
+  }
+
   async initialize(): Promise<void> {
     if (this.initialized) return;
 
