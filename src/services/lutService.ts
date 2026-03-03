@@ -1,6 +1,6 @@
-import { readFile, writeFile, unlink, mkdir } from 'fs/promises';
-import { existsSync } from 'fs';
-import { join } from 'path';
+import { readFile, readdir, writeFile, unlink, mkdir } from 'fs/promises';
+import { existsSync, watch, type FSWatcher } from 'fs';
+import { join, extname, basename } from 'path';
 import { createHash } from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { lutLogger as logger } from '../logger.js';
@@ -19,6 +19,9 @@ export class LUTService {
   private static instance: LUTService;
   private luts: Map<string, LUTDescriptor> = new Map();
   private initialized = false;
+  private watcher: FSWatcher | null = null;
+  private scanDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private watchDir: string | null = null;
 
   private constructor() {}
 
@@ -339,6 +342,84 @@ export class LUTService {
       data,
       colorspace,
     };
+  }
+
+  /**
+   * Watch a directory for new .cube files and auto-import them.
+   * Uses a debounced full-directory scan so partial writes and
+   * rapid multi-file drops are handled gracefully.
+   */
+  startWatching(directory: string): void {
+    if (!existsSync(directory)) {
+      logger.warn({ directory }, 'Watch directory does not exist, skipping LUT watcher');
+      return;
+    }
+
+    this.watchDir = directory;
+    logger.info({ directory }, 'Watching directory for new LUT files');
+
+    this.scanDirectory();
+
+    this.watcher = watch(directory, { persistent: false }, (_event, filename) => {
+      if (!filename || extname(filename).toLowerCase() !== '.cube') return;
+      this.debouncedScan();
+    });
+
+    this.watcher.on('error', (err) => {
+      logger.error({ err }, 'LUT directory watcher error');
+    });
+  }
+
+  stopWatching(): void {
+    if (this.scanDebounceTimer) {
+      clearTimeout(this.scanDebounceTimer);
+      this.scanDebounceTimer = null;
+    }
+    if (this.watcher) {
+      this.watcher.close();
+      this.watcher = null;
+      logger.info('Stopped LUT directory watcher');
+    }
+  }
+
+  private debouncedScan(): void {
+    if (this.scanDebounceTimer) clearTimeout(this.scanDebounceTimer);
+    this.scanDebounceTimer = setTimeout(() => {
+      this.scanDirectory().catch((err) =>
+        logger.error({ err }, 'Error during LUT directory scan'),
+      );
+    }, 500);
+  }
+
+  private async scanDirectory(): Promise<void> {
+    if (!this.watchDir) return;
+
+    const files = await readdir(this.watchDir);
+    const cubeFiles = files.filter((f) => extname(f).toLowerCase() === '.cube');
+
+    for (const file of cubeFiles) {
+      const filePath = join(this.watchDir, file);
+      const lutName = basename(file, '.cube');
+
+      try {
+        const fileBuffer = await readFile(filePath);
+        const hash = createHash('sha256').update(fileBuffer).digest('hex');
+
+        const alreadyLoaded = Array.from(this.luts.values()).some((l) => l.hash === hash);
+        if (alreadyLoaded) continue;
+
+        const lut = await this.createLUT(fileBuffer, {
+          name: lutName,
+          metadata: { originalPath: filePath, importedAt: new Date().toISOString() },
+        });
+        logger.info({ lutId: lut.id, name: lut.name }, 'Hot-loaded new LUT');
+      } catch (error) {
+        if (error instanceof Error && error.message.includes('same hash already exists')) {
+          continue;
+        }
+        logger.error({ file, error }, 'Failed to hot-load LUT file');
+      }
+    }
   }
 
   /**

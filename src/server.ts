@@ -1,4 +1,5 @@
 import express, { Express } from 'express';
+import { resolve } from 'path';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
@@ -117,6 +118,9 @@ async function startServer(): Promise<void> {
     await lutService.initialize();
     await storageService.initialize();
 
+    // Hot-reload LUTs from the project's luts/ directory
+    const lutWatchDir = resolve('luts');
+    lutService.startWatching(lutWatchDir);
 
     // Start server
     const port = config.PORT;
@@ -139,7 +143,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
     serverLogger.info('Stopping server...');
 
 
-    // Shutdown storage service
+    lutService.stopWatching();
     await storageService.shutdown();
 
     serverLogger.info('Server shutdown complete');
