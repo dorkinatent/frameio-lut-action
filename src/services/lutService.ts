@@ -416,7 +416,11 @@ export class LUTService {
 
         const staleIds: string[] = [];
         for (const [id, existing] of this.luts) {
-          if (existing.metadata?.originalPath === filePath && !existing.deletedAt) {
+          if (
+            existing.metadata?.originalPath === filePath &&
+            !existing.deletedAt &&
+            existing.hash !== hash
+          ) {
             staleIds.push(id);
           }
         }
