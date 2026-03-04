@@ -32,15 +32,22 @@ export function getEventWebhookSecret(): string | null {
 async function cleanupStaleWebhook(): Promise<void> {
   if (!existsSync(STATE_PATH)) return;
 
+  let prev: WebhookState;
   try {
-    const prev: WebhookState = JSON.parse(await readFile(STATE_PATH, 'utf-8'));
+    prev = JSON.parse(await readFile(STATE_PATH, 'utf-8'));
+  } catch (err) {
+    logger.debug({ err }, 'Could not read stale webhook state, removing corrupt file');
+    await unlink(STATE_PATH).catch(() => {});
+    return;
+  }
+
+  try {
     logger.info({ webhookId: prev.webhookId }, 'Found stale webhook from previous run, deleting');
     await frameioService.deleteWebhook(prev.accountId, prev.webhookId);
     logger.info({ webhookId: prev.webhookId }, 'Deleted stale webhook');
-  } catch (err) {
-    logger.debug({ err }, 'Could not delete stale webhook (may already be gone)');
-  } finally {
     await unlink(STATE_PATH).catch(() => {});
+  } catch (err) {
+    logger.warn({ err, webhookId: prev.webhookId }, 'Could not delete stale webhook, preserving state for next attempt');
   }
 }
 
@@ -97,7 +104,18 @@ export async function registerEventWebhook(): Promise<void> {
       accountId: fioConfig.account_id,
       secret: result.secret,
     };
-    await writeFile(STATE_PATH, JSON.stringify(state, null, 2), { mode: 0o600 });
+
+    try {
+      await writeFile(STATE_PATH, JSON.stringify(state, null, 2), { mode: 0o600 });
+    } catch (writeErr) {
+      webhookSecret = null;
+      try {
+        await frameioService.deleteWebhook(fioConfig.account_id, result.id);
+      } catch (deleteErr) {
+        logger.error({ deleteErr, webhookId: result.id }, 'Failed to roll back orphaned webhook after state persistence failure');
+      }
+      throw writeErr;
+    }
 
     logger.info({ webhookId: result.id, url }, 'Registered event webhook');
   } catch (err) {

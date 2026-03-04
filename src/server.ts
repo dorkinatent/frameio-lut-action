@@ -1,10 +1,9 @@
 import express, { Express } from 'express';
-import { resolve } from 'path';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import pinoHttp from 'pino-http';
-import { config } from './config.js';
+import { config, LUT_STORAGE_DIR } from './config.js';
 import { logger, serverLogger, generateRequestId } from './logger.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { captureRawBody } from './middleware/verifySignature.js';
@@ -119,9 +118,8 @@ async function startServer(): Promise<void> {
     await lutService.initialize();
     await storageService.initialize();
 
-    // Hot-reload LUTs from the project's luts/ directory
-    const lutWatchDir = resolve('luts');
-    lutService.startWatching(lutWatchDir);
+    // Watch LUT storage directory so webhook-synced and manually-added LUTs are detected
+    await lutService.startWatching(LUT_STORAGE_DIR);
 
     // Register Frame.io webhook for LUT sync (gracefully skips if not configured)
     await registerEventWebhook();

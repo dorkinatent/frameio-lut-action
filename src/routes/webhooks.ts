@@ -1,7 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { existsSync, createWriteStream } from 'fs';
-import { readFile, writeFile, unlink } from 'fs/promises';
-import { join, extname, basename, resolve } from 'path';
+import { readFile, writeFile, unlink, mkdir } from 'fs/promises';
+import { join, extname, basename, resolve, sep } from 'path';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { pipeline } from 'stream/promises';
 import { z } from 'zod';
@@ -176,7 +176,7 @@ function sanitizeFilename(raw: string): string | null {
   const name = basename(raw);
   if (!SAFE_FILENAME_RE.test(name)) return null;
   const full = resolve(LUT_DOWNLOAD_DIR, name);
-  if (!full.startsWith(resolve(LUT_DOWNLOAD_DIR) + '/')) return null;
+  if (!full.startsWith(resolve(LUT_DOWNLOAD_DIR) + sep)) return null;
   return name;
 }
 
@@ -193,6 +193,7 @@ async function loadSyncMap(): Promise<SyncMap> {
 }
 
 async function saveSyncMap(map: SyncMap): Promise<void> {
+  await mkdir(LUT_DOWNLOAD_DIR, { recursive: true });
   await writeFile(SYNC_MAP_PATH, JSON.stringify(map, null, 2));
 }
 
@@ -324,6 +325,7 @@ async function handleFileUploaded(fileId: string, accountId: string, res: Respon
     return;
   }
 
+  await mkdir(LUT_DOWNLOAD_DIR, { recursive: true });
   const downloadUrl = await frameioService.getDownloadUrl(fileId, accountId);
   const abort = new AbortController();
   const timer = setTimeout(() => abort.abort(), DOWNLOAD_TIMEOUT_MS);
@@ -352,30 +354,36 @@ async function handleFileUploaded(fileId: string, accountId: string, res: Respon
 async function handleFileDeleted(fileId: string, res: Response) {
   let removedName: string | null = null;
 
-  await updateSyncMap((map) => {
+  const prev = syncMapLock;
+  let release!: () => void;
+  syncMapLock = new Promise<void>((r) => { release = r; });
+  await prev;
+  try {
+    const map = await loadSyncMap();
     const filename = map[fileId];
-    if (!filename) return;
-
-    const safeName = sanitizeFilename(filename);
-    if (!safeName) {
-      logger.warn({ fileId, filename }, 'Sync map contained unsafe filename, purging entry');
-      delete map[fileId];
-      return;
+    if (filename) {
+      const safeName = sanitizeFilename(filename);
+      if (!safeName) {
+        logger.warn({ fileId, filename }, 'Sync map contained unsafe filename, purging entry');
+        delete map[fileId];
+      } else {
+        const localPath = join(LUT_DOWNLOAD_DIR, safeName);
+        if (existsSync(localPath)) {
+          try {
+            await unlink(localPath);
+            logger.info({ name: safeName, localPath }, 'Removed local LUT (deleted from Frame.io)');
+          } catch (err) {
+            logger.warn({ localPath, err }, 'Failed to remove local LUT file');
+          }
+        }
+        removedName = safeName;
+        delete map[fileId];
+      }
+      await saveSyncMap(map);
     }
-
-    const localPath = join(LUT_DOWNLOAD_DIR, safeName);
-    if (existsSync(localPath)) {
-      // unlink is async but we fire-and-forget inside the sync mutator;
-      // the file watcher will handle registry cleanup regardless.
-      unlink(localPath).catch((err) =>
-        logger.warn({ localPath, err }, 'Failed to remove local LUT file'),
-      );
-      logger.info({ name: safeName, localPath }, 'Removed local LUT (deleted from Frame.io)');
-    }
-
-    removedName = safeName;
-    delete map[fileId];
-  });
+  } finally {
+    release();
+  }
 
   if (!removedName) {
     res.json({ ignored: true, reason: 'Asset not in sync map' });

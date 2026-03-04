@@ -349,16 +349,22 @@ export class LUTService {
    * Uses a debounced full-directory scan so partial writes and
    * rapid multi-file drops are handled gracefully.
    */
-  startWatching(directory: string): void {
+  async startWatching(directory: string): Promise<void> {
     if (!existsSync(directory)) {
       logger.warn({ directory }, 'Watch directory does not exist, skipping LUT watcher');
       return;
     }
 
+    this.stopWatching();
+
     this.watchDir = directory;
     logger.info({ directory }, 'Watching directory for new LUT files');
 
-    this.scanDirectory();
+    try {
+      await this.scanDirectory();
+    } catch (err) {
+      logger.error({ err }, 'Initial LUT directory scan failed');
+    }
 
     this.watcher = watch(directory, { persistent: false }, (_event, filename) => {
       if (!filename || extname(filename).toLowerCase() !== '.cube') return;
@@ -410,6 +416,15 @@ export class LUTService {
 
         const alreadyLoaded = Array.from(this.luts.values()).some((l) => l.hash === hash);
         if (alreadyLoaded) continue;
+
+        // If the source file changed content, remove the stale entry for this path
+        // so we don't accumulate active duplicates for the same source file.
+        for (const [id, existing] of this.luts) {
+          if (existing.metadata?.originalPath === filePath && !existing.deletedAt) {
+            logger.info({ lutId: id, name: existing.name }, 'Source file changed, replacing stale LUT');
+            await this.deleteLUT(id, true);
+          }
+        }
 
         const lut = await this.createLUT(fileBuffer, {
           name: lutName,
