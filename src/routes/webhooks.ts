@@ -1,7 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { existsSync, createWriteStream } from 'fs';
 import { readFile, writeFile, unlink } from 'fs/promises';
-import { join, extname } from 'path';
+import { join, extname, basename, resolve } from 'path';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { pipeline } from 'stream/promises';
 import { z } from 'zod';
@@ -166,8 +166,23 @@ const EventPayloadSchema = z.object({
 
 const LUT_DOWNLOAD_DIR = join(process.cwd(), 'luts');
 const SYNC_MAP_PATH = join(LUT_DOWNLOAD_DIR, '.frameio-sync.json');
+const SAFE_FILENAME_RE = /^[A-Za-z0-9_\-. ]+\.cube$/;
 
-type SyncMap = Record<string, string>; // Frame.io asset ID → local filename
+/**
+ * Sanitize an external filename: strip path components, reject traversal
+ * sequences and characters outside a safe whitelist.
+ */
+function sanitizeFilename(raw: string): string | null {
+  const name = basename(raw);
+  if (!SAFE_FILENAME_RE.test(name)) return null;
+  const full = resolve(LUT_DOWNLOAD_DIR, name);
+  if (!full.startsWith(resolve(LUT_DOWNLOAD_DIR) + '/')) return null;
+  return name;
+}
+
+type SyncMap = Record<string, string>;
+
+let syncMapLock: Promise<void> = Promise.resolve();
 
 async function loadSyncMap(): Promise<SyncMap> {
   try {
@@ -179,6 +194,20 @@ async function loadSyncMap(): Promise<SyncMap> {
 
 async function saveSyncMap(map: SyncMap): Promise<void> {
   await writeFile(SYNC_MAP_PATH, JSON.stringify(map, null, 2));
+}
+
+async function updateSyncMap(mutator: (map: SyncMap) => void): Promise<void> {
+  const prev = syncMapLock;
+  let release!: () => void;
+  syncMapLock = new Promise<void>((r) => { release = r; });
+  await prev;
+  try {
+    const map = await loadSyncMap();
+    mutator(map);
+    await saveSyncMap(map);
+  } finally {
+    release();
+  }
 }
 
 /**
@@ -258,12 +287,21 @@ router.post(
   }),
 );
 
+const DOWNLOAD_TIMEOUT_MS = 30_000;
+
 async function handleFileUploaded(fileId: string, accountId: string, res: Response) {
   const file = await frameioService.getFile(fileId, accountId);
 
   if (!file.name || extname(file.name).toLowerCase() !== '.cube') {
     logger.debug({ fileId, name: file.name }, 'Ignoring non-.cube file');
     res.json({ ignored: true, reason: 'Not a .cube file' });
+    return;
+  }
+
+  const safeName = sanitizeFilename(file.name);
+  if (!safeName) {
+    logger.warn({ fileId, name: file.name }, 'Rejected unsafe LUT filename');
+    res.status(400).json({ error: 'Invalid filename' });
     return;
   }
 
@@ -279,44 +317,72 @@ async function handleFileUploaded(fileId: string, accountId: string, res: Respon
     return;
   }
 
-  const localPath = join(LUT_DOWNLOAD_DIR, file.name);
+  const localPath = join(LUT_DOWNLOAD_DIR, safeName);
   if (existsSync(localPath)) {
-    logger.info({ name: file.name }, 'LUT already exists locally, skipping');
+    logger.info({ name: safeName }, 'LUT already exists locally, skipping');
     res.json({ ignored: true, reason: 'Already exists locally' });
     return;
   }
 
   const downloadUrl = await frameioService.getDownloadUrl(fileId, accountId);
-  const response = await axios({ method: 'GET', url: downloadUrl, responseType: 'stream' });
-  await pipeline(response.data, createWriteStream(localPath));
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), DOWNLOAD_TIMEOUT_MS);
+  try {
+    const response = await axios({
+      method: 'GET',
+      url: downloadUrl,
+      responseType: 'stream',
+      signal: abort.signal,
+      timeout: DOWNLOAD_TIMEOUT_MS,
+    });
+    await pipeline(response.data, createWriteStream(localPath));
+  } catch (err) {
+    await unlink(localPath).catch(() => {});
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 
-  const syncMap = await loadSyncMap();
-  syncMap[fileId] = file.name;
-  await saveSyncMap(syncMap);
+  await updateSyncMap((map) => { map[fileId] = safeName; });
 
-  logger.info({ name: file.name, localPath }, 'Synced LUT from Frame.io');
-  res.json({ synced: true, name: file.name });
+  logger.info({ name: safeName, localPath }, 'Synced LUT from Frame.io');
+  res.json({ synced: true, name: safeName });
 }
 
 async function handleFileDeleted(fileId: string, res: Response) {
-  const syncMap = await loadSyncMap();
-  const filename = syncMap[fileId];
+  let removedName: string | null = null;
 
-  if (!filename) {
+  await updateSyncMap((map) => {
+    const filename = map[fileId];
+    if (!filename) return;
+
+    const safeName = sanitizeFilename(filename);
+    if (!safeName) {
+      logger.warn({ fileId, filename }, 'Sync map contained unsafe filename, purging entry');
+      delete map[fileId];
+      return;
+    }
+
+    const localPath = join(LUT_DOWNLOAD_DIR, safeName);
+    if (existsSync(localPath)) {
+      // unlink is async but we fire-and-forget inside the sync mutator;
+      // the file watcher will handle registry cleanup regardless.
+      unlink(localPath).catch((err) =>
+        logger.warn({ localPath, err }, 'Failed to remove local LUT file'),
+      );
+      logger.info({ name: safeName, localPath }, 'Removed local LUT (deleted from Frame.io)');
+    }
+
+    removedName = safeName;
+    delete map[fileId];
+  });
+
+  if (!removedName) {
     res.json({ ignored: true, reason: 'Asset not in sync map' });
     return;
   }
 
-  const localPath = join(LUT_DOWNLOAD_DIR, filename);
-  if (existsSync(localPath)) {
-    await unlink(localPath);
-    logger.info({ name: filename, localPath }, 'Removed local LUT (deleted from Frame.io)');
-  }
-
-  delete syncMap[fileId];
-  await saveSyncMap(syncMap);
-
-  res.json({ removed: true, name: filename });
+  res.json({ removed: true, name: removedName });
 }
 
 /**

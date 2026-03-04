@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { existsSync } from 'fs';
-import { mkdir, rm, readFile } from 'fs/promises';
+import { mkdir, rm, readFile, writeFile } from 'fs/promises';
 import { join, resolve, basename } from 'path';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { logger } from '../logger.js';
@@ -109,7 +109,6 @@ router.get(
       await rm(downloadDir, { recursive: true, force: true });
 
       // Write cache marker with LUT fingerprint for invalidation
-      const { writeFile } = await import('fs/promises');
       await writeFile(cacheMarker, JSON.stringify({
         generatedAt: new Date().toISOString(),
         count: results.length,

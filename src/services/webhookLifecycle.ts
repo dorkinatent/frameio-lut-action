@@ -97,7 +97,7 @@ export async function registerEventWebhook(): Promise<void> {
       accountId: fioConfig.account_id,
       secret: result.secret,
     };
-    await writeFile(STATE_PATH, JSON.stringify(state, null, 2));
+    await writeFile(STATE_PATH, JSON.stringify(state, null, 2), { mode: 0o600 });
 
     logger.info({ webhookId: result.id, url }, 'Registered event webhook');
   } catch (err) {

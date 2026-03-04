@@ -424,14 +424,19 @@ export class LUTService {
       }
     }
 
-    // Remove LUTs whose source file was deleted from the watched directory
+    // Remove LUTs whose source file was deleted from the watched directory.
+    // Collect IDs first to avoid mutating the Map during iteration.
+    const idsToDelete: string[] = [];
     for (const [id, lut] of this.luts) {
       const origPath = lut.metadata?.originalPath as string | undefined;
       if (!origPath || !origPath.startsWith(this.watchDir!)) continue;
       if (cubeFiles.has(origPath)) continue;
       if (lut.deletedAt) continue;
-
-      logger.info({ lutId: id, name: lut.name, origPath }, 'Source file removed, deleting LUT');
+      idsToDelete.push(id);
+    }
+    for (const id of idsToDelete) {
+      const lut = this.luts.get(id);
+      logger.info({ lutId: id, name: lut?.name, origPath: lut?.metadata?.originalPath }, 'Source file removed, deleting LUT');
       await this.deleteLUT(id, true);
     }
   }
