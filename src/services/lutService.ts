@@ -386,6 +386,7 @@ export class LUTService {
       this.watcher = null;
       logger.info('Stopped LUT directory watcher');
     }
+    this.watchDir = null;
   }
 
   private debouncedScan(): void {
@@ -414,11 +415,6 @@ export class LUTService {
         const fileBuffer = await readFile(filePath);
         const hash = createHash('sha256').update(fileBuffer).digest('hex');
 
-        const alreadyLoaded = Array.from(this.luts.values()).some((l) => l.hash === hash);
-        if (alreadyLoaded) continue;
-
-        // If the source file changed content, remove the stale entry for this path
-        // so we don't accumulate active duplicates for the same source file.
         const staleIds: string[] = [];
         for (const [id, existing] of this.luts) {
           if (existing.metadata?.originalPath === filePath && !existing.deletedAt) {
@@ -431,15 +427,15 @@ export class LUTService {
           await this.deleteLUT(id, true);
         }
 
+        const alreadyLoaded = Array.from(this.luts.values()).some((l) => l.hash === hash);
+        if (alreadyLoaded) continue;
+
         const lut = await this.createLUT(fileBuffer, {
           name: lutName,
           metadata: { originalPath: filePath, importedAt: new Date().toISOString() },
         });
         logger.info({ lutId: lut.id, name: lut.name }, 'Hot-loaded new LUT');
       } catch (error) {
-        if (error instanceof Error && error.message.includes('same hash already exists')) {
-          continue;
-        }
         logger.error({ file: filePath, error }, 'Failed to hot-load LUT file');
       }
     }
