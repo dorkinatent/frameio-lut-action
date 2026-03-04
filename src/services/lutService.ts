@@ -350,12 +350,12 @@ export class LUTService {
    * rapid multi-file drops are handled gracefully.
    */
   async startWatching(directory: string): Promise<void> {
+    this.stopWatching();
+
     if (!existsSync(directory)) {
       logger.warn({ directory }, 'Watch directory does not exist, skipping LUT watcher');
       return;
     }
-
-    this.stopWatching();
 
     this.watchDir = directory;
     logger.info({ directory }, 'Watching directory for new LUT files');

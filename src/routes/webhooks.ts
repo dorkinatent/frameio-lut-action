@@ -326,6 +326,9 @@ async function handleFileUploaded(fileId: string, accountId: string, res: Respon
 
   const localPath = join(LUT_DOWNLOAD_DIR, safeName);
   if (existsSync(localPath)) {
+    await updateSyncMap((map) => {
+      map[fileId] = safeName;
+    });
     logger.info({ name: safeName }, 'LUT already exists locally, skipping');
     res.json({ ignored: true, reason: 'Already exists locally' });
     return;
@@ -385,6 +388,7 @@ async function handleFileDeleted(fileId: string, res: Response) {
             delete map[fileId];
           } catch (err) {
             logger.warn({ localPath, err }, 'Failed to remove local LUT file, keeping sync map entry');
+            throw err;
           }
         }
       }
