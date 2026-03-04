@@ -56,7 +56,7 @@ export class LUTService {
   /**
    * List all available LUTs
    */
-  async listLUTs(includeDeleted = false): Promise<LUTDescriptor[]> {
+  listLUTs(includeDeleted = false): LUTDescriptor[] {
     const luts = Array.from(this.luts.values());
     if (includeDeleted) {
       return luts;
@@ -67,7 +67,7 @@ export class LUTService {
   /**
    * Get a specific LUT by ID
    */
-  async getLUT(lutId: string): Promise<LUTDescriptor | null> {
+  getLUT(lutId: string): LUTDescriptor | null {
     const lut = this.luts.get(lutId);
     if (!lut || lut.deletedAt) {
       return null;
@@ -78,18 +78,15 @@ export class LUTService {
   /**
    * Create a new LUT from uploaded file
    */
-  async createLUT(
-    fileBuffer: Buffer,
-    request: LUTCreateRequest,
-  ): Promise<LUTDescriptor> {
+  async createLUT(fileBuffer: Buffer, request: LUTCreateRequest): Promise<LUTDescriptor> {
     // Validate the LUT file
-    const validation = await this.validateLUT(fileBuffer);
+    const validation = this.validateLUT(fileBuffer);
     if (!validation.valid) {
       throw new Error(`Invalid LUT file: ${validation.errors?.join(', ')}`);
     }
 
     // Parse the LUT to get details
-    const parsedLUT = await this.parseCubeLUT(fileBuffer.toString());
+    const parsedLUT = this.parseCubeLUT(fileBuffer.toString());
 
     // Generate unique ID and hash
     const lutId = uuidv4();
@@ -167,10 +164,10 @@ export class LUTService {
   /**
    * Validate a LUT file
    */
-  async validateLUT(fileBuffer: Buffer): Promise<LUTValidationResult> {
+  validateLUT(fileBuffer: Buffer): LUTValidationResult {
     const errors: string[] = [];
     const warnings: string[] = [];
-    
+
     try {
       const content = fileBuffer.toString();
       const lines = content.split('\n').filter((line) => line.trim() && !line.startsWith('#'));
@@ -218,9 +215,7 @@ export class LUTService {
       // Count data points
       const dataLines = lines.filter(
         (line) =>
-          !line.startsWith('TITLE') &&
-          !line.startsWith('LUT_') &&
-          !line.startsWith('DOMAIN_'),
+          !line.startsWith('TITLE') && !line.startsWith('LUT_') && !line.startsWith('DOMAIN_'),
       );
 
       const expectedDataPoints = type === '3D' ? size * size * size : size;
@@ -244,7 +239,9 @@ export class LUTService {
     } catch (error) {
       return {
         valid: false,
-        errors: [`Failed to parse LUT file: ${error instanceof Error ? error.message : 'Unknown error'}`],
+        errors: [
+          `Failed to parse LUT file: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        ],
       };
     }
   }
@@ -252,7 +249,7 @@ export class LUTService {
   /**
    * Parse a CUBE LUT file
    */
-  async parseCubeLUT(content: string): Promise<CubeLUT> {
+  parseCubeLUT(content: string): CubeLUT {
     const lines = content.split('\n');
     let title = 'Untitled';
     let type: LUTType = '3D';
@@ -265,7 +262,10 @@ export class LUTService {
     for (const line of lines) {
       const trimmed = line.trim();
       if (trimmed.startsWith('TITLE')) {
-        title = trimmed.substring(5).trim().replace(/^["']|["']$/g, '');
+        title = trimmed
+          .substring(5)
+          .trim()
+          .replace(/^["']|["']$/g, '');
       } else if (trimmed.startsWith('LUT_3D_SIZE')) {
         size = parseInt(trimmed.split(/\s+/)[1], 10);
         type = '3D';
@@ -392,7 +392,7 @@ export class LUTService {
   private debouncedScan(): void {
     if (this.scanDebounceTimer) clearTimeout(this.scanDebounceTimer);
     this.scanDebounceTimer = setTimeout(() => {
-      this.scanDirectory().catch((err) =>
+      this.scanDirectory().catch((err: unknown) =>
         logger.error({ err }, 'Error during LUT directory scan'),
       );
     }, 500);
@@ -403,8 +403,7 @@ export class LUTService {
 
     const files = await readdir(this.watchDir);
     const cubeFiles = new Set(
-      files.filter((f) => extname(f).toLowerCase() === '.cube')
-        .map((f) => join(this.watchDir!, f)),
+      files.filter((f) => extname(f).toLowerCase() === '.cube').map((f) => join(this.watchDir!, f)),
     );
 
     // Add new LUTs
@@ -423,11 +422,16 @@ export class LUTService {
         }
         for (const id of staleIds) {
           const existing = this.luts.get(id);
-          logger.info({ lutId: id, name: existing?.name }, 'Source file changed, replacing stale LUT');
+          logger.info(
+            { lutId: id, name: existing?.name },
+            'Source file changed, replacing stale LUT',
+          );
           await this.deleteLUT(id, true);
         }
 
-        const alreadyLoaded = Array.from(this.luts.values()).some((l) => l.hash === hash);
+        const alreadyLoaded = Array.from(this.luts.values()).some(
+          (l) => l.hash === hash && !l.deletedAt,
+        );
         if (alreadyLoaded) continue;
 
         const lut = await this.createLUT(fileBuffer, {
@@ -444,15 +448,19 @@ export class LUTService {
     // Collect IDs first to avoid mutating the Map during iteration.
     const idsToDelete: string[] = [];
     for (const [id, lut] of this.luts) {
-      const origPath = lut.metadata?.originalPath as string | undefined;
-      if (!origPath || !origPath.startsWith(this.watchDir!)) continue;
+      const origPath = lut.metadata?.originalPath;
+      if (!origPath || typeof origPath !== 'string') continue;
+      if (!origPath.startsWith(this.watchDir)) continue;
       if (cubeFiles.has(origPath)) continue;
       if (lut.deletedAt) continue;
       idsToDelete.push(id);
     }
     for (const id of idsToDelete) {
       const lut = this.luts.get(id);
-      logger.info({ lutId: id, name: lut?.name, origPath: lut?.metadata?.originalPath }, 'Source file removed, deleting LUT');
+      logger.info(
+        { lutId: id, name: lut?.name, origPath: lut?.metadata?.originalPath },
+        'Source file removed, deleting LUT',
+      );
       await this.deleteLUT(id, true);
     }
   }
@@ -460,8 +468,8 @@ export class LUTService {
   /**
    * Get LUT file path
    */
-  async getLUTFilePath(lutId: string): Promise<string> {
-    const lut = await this.getLUT(lutId);
+  getLUTFilePath(lutId: string): string {
+    const lut = this.getLUT(lutId);
     if (!lut) {
       throw new Error(`LUT not found: ${lutId}`);
     }

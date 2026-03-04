@@ -24,27 +24,28 @@ const ResourceSchema = z.object({
 
 // Accepts both legacy single-asset (`resource`) and multi-asset (`resources`) payloads.
 // See https://next.developer.frame.io/platform/docs/guides/custom-actions#multi-asset-configuration
-const CustomActionPayloadSchema = z.object({
-  account_id: z.string().uuid(),
-  action_id: z.string().uuid(),
-  interaction_id: z.string().uuid(),
-  project: z.object({
-    id: z.string().uuid(),
-  }),
-  resource: ResourceSchema.optional(),
-  resources: z.array(ResourceSchema).min(1).max(100).optional(),
-  type: z.string(),
-  user: z.object({
-    id: z.string().uuid(),
-  }),
-  workspace: z.object({
-    id: z.string().uuid(),
-  }),
-  data: z.record(z.unknown()).optional(),
-}).refine(
-  (data) => data.resource || data.resources,
-  { message: 'Payload must include either `resource` or `resources`' },
-);
+const CustomActionPayloadSchema = z
+  .object({
+    account_id: z.string().uuid(),
+    action_id: z.string().uuid(),
+    interaction_id: z.string().uuid(),
+    project: z.object({
+      id: z.string().uuid(),
+    }),
+    resource: ResourceSchema.optional(),
+    resources: z.array(ResourceSchema).min(1).max(100).optional(),
+    type: z.string(),
+    user: z.object({
+      id: z.string().uuid(),
+    }),
+    workspace: z.object({
+      id: z.string().uuid(),
+    }),
+    data: z.record(z.unknown()).optional(),
+  })
+  .refine((data) => data.resource || data.resources, {
+    message: 'Payload must include either `resource` or `resources`',
+  });
 
 /**
  * Normalize legacy single-asset and multi-asset payloads into a single array.
@@ -63,7 +64,7 @@ router.post(
   '/frameio/custom-action',
   verifySignature,
   asyncHandler(async (req: Request, res: Response) => {
-    logger.info({ body: req.body }, 'Received custom action webhook');
+    logger.info({ body: req.body as unknown }, 'Received custom action webhook');
 
     const payload = CustomActionPayloadSchema.parse(req.body);
     const resources = getResources(payload);
@@ -186,7 +187,7 @@ let syncMapLock: Promise<void> = Promise.resolve();
 
 async function loadSyncMap(): Promise<SyncMap> {
   try {
-    return JSON.parse(await readFile(SYNC_MAP_PATH, 'utf-8'));
+    return JSON.parse(await readFile(SYNC_MAP_PATH, 'utf-8')) as SyncMap;
   } catch {
     return {};
   }
@@ -200,7 +201,9 @@ async function saveSyncMap(map: SyncMap): Promise<void> {
 async function updateSyncMap(mutator: (map: SyncMap) => void): Promise<void> {
   const prev = syncMapLock;
   let release!: () => void;
-  syncMapLock = new Promise<void>((r) => { release = r; });
+  syncMapLock = new Promise<void>((r) => {
+    release = r;
+  });
   await prev;
   try {
     const map = await loadSyncMap();
@@ -244,9 +247,7 @@ function verifyEventSignature(req: SignedRequest, res: Response, next: NextFunct
     return;
   }
 
-  const expected = createHmac('sha256', secret)
-    .update(`v0:${timestamp}:${body}`)
-    .digest('hex');
+  const expected = createHmac('sha256', secret).update(`v0:${timestamp}:${body}`).digest('hex');
 
   const provided = signature.slice(3);
   const a = Buffer.from(expected);
@@ -354,7 +355,9 @@ async function handleFileUploaded(fileId: string, accountId: string, res: Respon
     clearTimeout(timer);
   }
 
-  await updateSyncMap((map) => { map[fileId] = safeName; });
+  await updateSyncMap((map) => {
+    map[fileId] = safeName;
+  });
 
   logger.info({ name: safeName, localPath }, 'Synced LUT from Frame.io');
   res.json({ synced: true, name: safeName });
@@ -365,7 +368,9 @@ async function handleFileDeleted(fileId: string, res: Response) {
 
   const prev = syncMapLock;
   let release!: () => void;
-  syncMapLock = new Promise<void>((r) => { release = r; });
+  syncMapLock = new Promise<void>((r) => {
+    release = r;
+  });
   await prev;
   try {
     const map = await loadSyncMap();
@@ -387,7 +392,10 @@ async function handleFileDeleted(fileId: string, res: Response) {
             removedName = safeName;
             delete map[fileId];
           } catch (err) {
-            logger.warn({ localPath, err }, 'Failed to remove local LUT file, keeping sync map entry');
+            logger.warn(
+              { localPath, err },
+              'Failed to remove local LUT file, keeping sync map entry',
+            );
             throw err;
           }
         }
@@ -428,18 +436,15 @@ async function checkIsLutFolder(folderId: string, accountId: string): Promise<bo
  * POST /webhooks/test
  * Test webhook endpoint (no signature verification)
  */
-router.post(
-  '/test',
-  asyncHandler(async (req: Request, res: Response) => {
-    logger.info({ body: req.body }, 'Received test webhook');
+router.post('/test', (req: Request, res: Response) => {
+  logger.info({ body: req.body as unknown }, 'Received test webhook');
 
-    // Echo back the payload
-    res.json({
-      received: true,
-      timestamp: new Date().toISOString(),
-      payload: req.body,
-    });
-  }),
-);
+  // Echo back the payload
+  res.json({
+    received: true,
+    timestamp: new Date().toISOString(),
+    payload: req.body as unknown,
+  });
+});
 
 export default router;
