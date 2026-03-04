@@ -33,6 +33,9 @@ const envSchema = z.object({
   FRAMEIO_S2S_CLIENT_SECRET: z.string().optional(),
   FRAMEIO_S2S_ORG_ID: z.string().optional(),
 
+  // LUT Sync — optional Frame.io folder ID for auto-syncing .cube files
+  FRAMEIO_LUT_FOLDER_ID: z.string().uuid().optional(),
+
   // Webhook Security
   FRAMEIO_WEBHOOK_SECRET: z.string().min(32),
 

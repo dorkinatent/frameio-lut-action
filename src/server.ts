@@ -3,12 +3,13 @@ import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import pinoHttp from 'pino-http';
-import { config } from './config.js';
+import { config, LUT_STORAGE_DIR } from './config.js';
 import { logger, serverLogger, generateRequestId } from './logger.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { captureRawBody } from './middleware/verifySignature.js';
 import { lutService } from './services/lutService.js';
 import { storageService } from './services/storageService.js';
+import { registerEventWebhook, deregisterEventWebhook } from './services/webhookLifecycle.js';
 
 // Import routes
 import authRoutes from './routes/auth.js';
@@ -117,6 +118,11 @@ async function startServer(): Promise<void> {
     await lutService.initialize();
     await storageService.initialize();
 
+    // Watch LUT storage directory so webhook-synced and manually-added LUTs are detected
+    await lutService.startWatching(LUT_STORAGE_DIR);
+
+    // Register Frame.io webhook for LUT sync (gracefully skips if not configured)
+    await registerEventWebhook();
 
     // Start server
     const port = config.PORT;
@@ -139,7 +145,8 @@ async function gracefulShutdown(signal: string): Promise<void> {
     serverLogger.info('Stopping server...');
 
 
-    // Shutdown storage service
+    await deregisterEventWebhook();
+    lutService.stopWatching();
     await storageService.shutdown();
 
     serverLogger.info('Server shutdown complete');

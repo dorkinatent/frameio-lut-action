@@ -176,6 +176,35 @@ export class FrameIOService {
   }
 
   /**
+   * Create an event webhook for a workspace.
+   * Returns the webhook ID and the one-time signing secret.
+   */
+  async createWebhook(
+    accountId: string,
+    workspaceId: string,
+    name: string,
+    url: string,
+    events: string[],
+  ): Promise<{ id: string; secret: string }> {
+    logger.info({ accountId, workspaceId, url, events }, 'Creating webhook');
+    const response = await this.client.webhooks.create(accountId, workspaceId, {
+      data: { name, url, events },
+    });
+    const { id, secret } = response.data;
+    logger.info({ webhookId: id }, 'Webhook created');
+    return { id, secret };
+  }
+
+  /**
+   * Delete a webhook by ID
+   */
+  async deleteWebhook(accountId: string, webhookId: string): Promise<void> {
+    logger.info({ webhookId }, 'Deleting webhook');
+    await this.client.webhooks.delete(accountId, webhookId);
+    logger.info({ webhookId }, 'Webhook deleted');
+  }
+
+  /**
    * Post a comment on a file
    */
   async postComment(

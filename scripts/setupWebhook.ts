@@ -56,9 +56,9 @@ async function setupWebhook() {
     const workspaceId = await rl.question('Enter your Frame.io Workspace ID: ');
     
     console.log('\n🎯 Select webhook events to listen for:');
-    console.log('1. Asset created');
-    console.log('2. Asset updated');
-    console.log('3. Asset ready (processing complete)');
+    console.log('1. File upload completed (for LUT sync)');
+    console.log('2. File created');
+    console.log('3. File ready (transcoding complete)');
     console.log('4. Comment created');
     console.log('5. All of the above');
     
@@ -67,22 +67,22 @@ async function setupWebhook() {
     let events: string[] = [];
     switch (eventChoice) {
       case '1':
-        events = ['asset.created'];
+        events = ['file.upload.completed'];
         break;
       case '2':
-        events = ['asset.updated'];
+        events = ['file.created'];
         break;
       case '3':
-        events = ['asset.ready'];
+        events = ['file.ready'];
         break;
       case '4':
         events = ['comment.created'];
         break;
       case '5':
-        events = ['asset.created', 'asset.updated', 'asset.ready', 'comment.created'];
+        events = ['file.upload.completed', 'file.created', 'file.ready', 'comment.created'];
         break;
       default:
-        events = ['asset.created', 'asset.ready'];
+        events = ['file.upload.completed'];
     }
     
     rl.close();
@@ -108,7 +108,7 @@ async function setupWebhook() {
           console.error('   Set it to your ngrok or deployment URL.');
           process.exit(1);
         }
-        return `${process.env.PUBLIC_URL}/webhooks/frameio`;
+        return `${process.env.PUBLIC_URL}/webhooks/frameio/events`;
       })(),
       events: events,
       secret: config.FRAMEIO_WEBHOOK_SECRET,

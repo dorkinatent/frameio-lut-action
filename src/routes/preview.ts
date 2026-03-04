@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { existsSync } from 'fs';
-import { mkdir, rm, readFile } from 'fs/promises';
+import { mkdir, rm, readFile, writeFile } from 'fs/promises';
 import { join, resolve, basename } from 'path';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { logger } from '../logger.js';
@@ -48,14 +48,26 @@ router.get(
     const previewDir = join(TEMP_PROCESSING_DIR, 'previews', assetId);
 
     try {
-      // Check if previews are already cached (with TTL)
+      // Build a fingerprint of the current LUT set so we can bust the cache
+      // when LUTs are added or removed.
+      const currentLuts = await lutService.listLUTs();
+      const lutFingerprint = currentLuts
+        .map((l) => l.id)
+        .sort()
+        .join(',');
+
+      // Check if previews are already cached (with TTL + LUT fingerprint)
       const cacheMarker = join(previewDir, '.done');
       if (existsSync(cacheMarker)) {
         try {
           const markerData = JSON.parse(await readFile(cacheMarker, 'utf-8'));
           const age = Date.now() - new Date(markerData.generatedAt).getTime();
+          const lutSetChanged = markerData.lutFingerprint !== lutFingerprint;
           if (age > PREVIEW_CACHE_TTL_MS) {
             logger.info({ assetId, ageMs: age }, 'Preview cache expired, regenerating');
+            await rm(previewDir, { recursive: true, force: true });
+          } else if (lutSetChanged) {
+            logger.info({ assetId }, 'LUT set changed since last preview, regenerating');
             await rm(previewDir, { recursive: true, force: true });
           } else {
             logger.info({ assetId }, 'Serving cached preview');
@@ -79,9 +91,7 @@ router.get(
         accountId as string,
       );
 
-      // Get all available LUTs
-      const luts = await lutService.listLUTs();
-      const lutEntries = luts.map((lut) => ({
+      const lutEntries = currentLuts.map((lut) => ({
         id: lut.id,
         name: lut.name,
         path: lut.storageUri.startsWith('file://') ? lut.storageUri.replace('file://', '') : lut.storageUri,
@@ -98,9 +108,12 @@ router.get(
       // Clean up the downloaded video — we only need the thumbnails
       await rm(downloadDir, { recursive: true, force: true });
 
-      // Write cache marker
-      const { writeFile } = await import('fs/promises');
-      await writeFile(cacheMarker, JSON.stringify({ generatedAt: new Date().toISOString(), count: results.length }));
+      // Write cache marker with LUT fingerprint for invalidation
+      await writeFile(cacheMarker, JSON.stringify({
+        generatedAt: new Date().toISOString(),
+        count: results.length,
+        lutFingerprint,
+      }));
 
       await servePreviews(res, previewDir, assetId as string);
     } catch (error) {

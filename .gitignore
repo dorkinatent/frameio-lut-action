@@ -21,6 +21,8 @@ build/
 .frameio-token
 *.frameio-token
 .frameio-config
+.frameio-webhook
+.frameio-sync.json
 .custom-action-*
 .webhook-id
 lut-registry.json
