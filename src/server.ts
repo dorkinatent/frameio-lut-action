@@ -10,6 +10,7 @@ import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { captureRawBody } from './middleware/verifySignature.js';
 import { lutService } from './services/lutService.js';
 import { storageService } from './services/storageService.js';
+import { registerEventWebhook, deregisterEventWebhook } from './services/webhookLifecycle.js';
 
 // Import routes
 import authRoutes from './routes/auth.js';
@@ -122,6 +123,9 @@ async function startServer(): Promise<void> {
     const lutWatchDir = resolve('luts');
     lutService.startWatching(lutWatchDir);
 
+    // Register Frame.io webhook for LUT sync (gracefully skips if not configured)
+    await registerEventWebhook();
+
     // Start server
     const port = config.PORT;
     app.listen(port, () => {
@@ -143,6 +147,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
     serverLogger.info('Stopping server...');
 
 
+    await deregisterEventWebhook();
     lutService.stopWatching();
     await storageService.shutdown();
 

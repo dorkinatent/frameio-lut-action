@@ -1,11 +1,19 @@
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
+import { existsSync, createWriteStream } from 'fs';
+import { readFile, writeFile, unlink } from 'fs/promises';
+import { join, extname } from 'path';
+import { createHmac, timingSafeEqual } from 'crypto';
+import { pipeline } from 'stream/promises';
 import { z } from 'zod';
-import { verifySignature } from '../middleware/verifySignature.js';
+import axios from 'axios';
+import { verifySignature, type SignedRequest } from '../middleware/verifySignature.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { processLUTJob } from '../services/simpleJobProcessor.js';
 import { webhookLogger as logger } from '../logger.js';
 import { LUTJobRequestSchema } from '../types/jobs.js';
 import { config } from '../config.js';
+import { frameioService } from '../services/frameioService.js';
+import { getEventWebhookSecret } from '../services/webhookLifecycle.js';
 
 const router = Router();
 
@@ -139,6 +147,195 @@ router.post(
     }
   }),
 );
+
+// ---------------------------------------------------------------------------
+// Frame.io event webhooks (file.upload.completed, etc.)
+// ---------------------------------------------------------------------------
+
+const EventPayloadSchema = z.object({
+  type: z.string(),
+  account: z.object({ id: z.string().uuid() }),
+  project: z.object({ id: z.string().uuid() }),
+  resource: z.object({
+    id: z.string().uuid(),
+    type: z.string(),
+  }),
+  user: z.object({ id: z.string().uuid() }),
+  workspace: z.object({ id: z.string().uuid() }),
+});
+
+const LUT_DOWNLOAD_DIR = join(process.cwd(), 'luts');
+const SYNC_MAP_PATH = join(LUT_DOWNLOAD_DIR, '.frameio-sync.json');
+
+type SyncMap = Record<string, string>; // Frame.io asset ID → local filename
+
+async function loadSyncMap(): Promise<SyncMap> {
+  try {
+    return JSON.parse(await readFile(SYNC_MAP_PATH, 'utf-8'));
+  } catch {
+    return {};
+  }
+}
+
+async function saveSyncMap(map: SyncMap): Promise<void> {
+  await writeFile(SYNC_MAP_PATH, JSON.stringify(map, null, 2));
+}
+
+/**
+ * Verify the signature of an event webhook using the dynamically-issued
+ * secret from webhook creation (falls back to static FRAMEIO_WEBHOOK_SECRET).
+ */
+function verifyEventSignature(req: SignedRequest, res: Response, next: NextFunction): void {
+  const secret = getEventWebhookSecret() || config.FRAMEIO_WEBHOOK_SECRET;
+
+  const signature = req.headers['x-frameio-signature'] as string;
+  const timestamp = req.headers['x-frameio-request-timestamp'] as string;
+
+  if (!signature || !timestamp) {
+    res.status(401).json({ error: 'Missing signature or timestamp header' });
+    return;
+  }
+
+  const ts = parseInt(timestamp, 10);
+  if (isNaN(ts) || Math.abs(Math.floor(Date.now() / 1000) - ts) > 300) {
+    res.status(401).json({ error: 'Invalid or expired timestamp' });
+    return;
+  }
+
+  const body = req.rawBody
+    ? req.rawBody.toString('utf8')
+    : typeof req.body === 'string'
+      ? req.body
+      : JSON.stringify(req.body);
+
+  const expected = createHmac('sha256', secret)
+    .update(`v0:${timestamp}:${body}`)
+    .digest('hex');
+
+  const [, provided] = (signature || '').split('=');
+  const a = Buffer.from(expected);
+  const b = Buffer.from(provided || '');
+
+  if (a.length !== b.length || !timingSafeEqual(a, b)) {
+    logger.warn('Invalid event webhook signature');
+    res.status(401).json({ error: 'Invalid signature' });
+    return;
+  }
+
+  next();
+}
+
+/**
+ * POST /webhooks/frameio/events
+ * Handle Frame.io event webhooks for LUT sync:
+ *   file.upload.completed → download .cube to local luts/
+ *   file.deleted          → remove the corresponding local .cube
+ */
+router.post(
+  '/frameio/events',
+  verifyEventSignature,
+  asyncHandler(async (req: Request, res: Response) => {
+    const payload = EventPayloadSchema.parse(req.body);
+    logger.info({ type: payload.type, resourceId: payload.resource.id }, 'Received Frame.io event');
+
+    if (payload.resource.type !== 'file') {
+      res.json({ ignored: true, reason: 'Not a file resource' });
+      return;
+    }
+
+    const { id: fileId } = payload.resource;
+    const accountId = payload.account.id;
+
+    if (payload.type === 'file.upload.completed') {
+      return await handleFileUploaded(fileId, accountId, res);
+    }
+
+    if (payload.type === 'file.deleted') {
+      return await handleFileDeleted(fileId, res);
+    }
+
+    res.json({ ignored: true, reason: `Unhandled event: ${payload.type}` });
+  }),
+);
+
+async function handleFileUploaded(fileId: string, accountId: string, res: Response) {
+  const file = await frameioService.getFile(fileId, accountId);
+
+  if (!file.name || extname(file.name).toLowerCase() !== '.cube') {
+    logger.debug({ fileId, name: file.name }, 'Ignoring non-.cube file');
+    res.json({ ignored: true, reason: 'Not a .cube file' });
+    return;
+  }
+
+  const parentId = file.parent_id;
+  if (!parentId) {
+    res.json({ ignored: true, reason: 'No parent folder' });
+    return;
+  }
+
+  if (!(await checkIsLutFolder(parentId, accountId))) {
+    logger.debug({ fileId, parentId }, 'File is not in the LUT folder, skipping');
+    res.json({ ignored: true, reason: 'Not in LUT folder' });
+    return;
+  }
+
+  const localPath = join(LUT_DOWNLOAD_DIR, file.name);
+  if (existsSync(localPath)) {
+    logger.info({ name: file.name }, 'LUT already exists locally, skipping');
+    res.json({ ignored: true, reason: 'Already exists locally' });
+    return;
+  }
+
+  const downloadUrl = await frameioService.getDownloadUrl(fileId, accountId);
+  const response = await axios({ method: 'GET', url: downloadUrl, responseType: 'stream' });
+  await pipeline(response.data, createWriteStream(localPath));
+
+  const syncMap = await loadSyncMap();
+  syncMap[fileId] = file.name;
+  await saveSyncMap(syncMap);
+
+  logger.info({ name: file.name, localPath }, 'Synced LUT from Frame.io');
+  res.json({ synced: true, name: file.name });
+}
+
+async function handleFileDeleted(fileId: string, res: Response) {
+  const syncMap = await loadSyncMap();
+  const filename = syncMap[fileId];
+
+  if (!filename) {
+    res.json({ ignored: true, reason: 'Asset not in sync map' });
+    return;
+  }
+
+  const localPath = join(LUT_DOWNLOAD_DIR, filename);
+  if (existsSync(localPath)) {
+    await unlink(localPath);
+    logger.info({ name: filename, localPath }, 'Removed local LUT (deleted from Frame.io)');
+  }
+
+  delete syncMap[fileId];
+  await saveSyncMap(syncMap);
+
+  res.json({ removed: true, name: filename });
+}
+
+/**
+ * Check whether a folder matches the configured LUT folder.
+ * If FRAMEIO_LUT_FOLDER_ID is set, compare by ID.
+ * Otherwise, match any folder named "luts" (case-insensitive).
+ */
+async function checkIsLutFolder(folderId: string, accountId: string): Promise<boolean> {
+  if (config.FRAMEIO_LUT_FOLDER_ID) {
+    return folderId === config.FRAMEIO_LUT_FOLDER_ID;
+  }
+  try {
+    const folder = await frameioService.getFolder(folderId, accountId);
+    return folder.name.toLowerCase() === 'luts';
+  } catch (err) {
+    logger.warn({ folderId, err }, 'Could not fetch parent folder');
+    return false;
+  }
+}
 
 /**
  * POST /webhooks/test

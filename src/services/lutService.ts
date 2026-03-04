@@ -395,11 +395,14 @@ export class LUTService {
     if (!this.watchDir) return;
 
     const files = await readdir(this.watchDir);
-    const cubeFiles = files.filter((f) => extname(f).toLowerCase() === '.cube');
+    const cubeFiles = new Set(
+      files.filter((f) => extname(f).toLowerCase() === '.cube')
+        .map((f) => join(this.watchDir!, f)),
+    );
 
-    for (const file of cubeFiles) {
-      const filePath = join(this.watchDir, file);
-      const lutName = basename(file, '.cube');
+    // Add new LUTs
+    for (const filePath of cubeFiles) {
+      const lutName = basename(filePath, '.cube');
 
       try {
         const fileBuffer = await readFile(filePath);
@@ -417,8 +420,19 @@ export class LUTService {
         if (error instanceof Error && error.message.includes('same hash already exists')) {
           continue;
         }
-        logger.error({ file, error }, 'Failed to hot-load LUT file');
+        logger.error({ file: filePath, error }, 'Failed to hot-load LUT file');
       }
+    }
+
+    // Remove LUTs whose source file was deleted from the watched directory
+    for (const [id, lut] of this.luts) {
+      const origPath = lut.metadata?.originalPath as string | undefined;
+      if (!origPath || !origPath.startsWith(this.watchDir!)) continue;
+      if (cubeFiles.has(origPath)) continue;
+      if (lut.deletedAt) continue;
+
+      logger.info({ lutId: id, name: lut.name, origPath }, 'Source file removed, deleting LUT');
+      await this.deleteLUT(id, true);
     }
   }
 
