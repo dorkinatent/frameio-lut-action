@@ -11,7 +11,7 @@ import { asyncHandler } from '../middleware/errorHandler.js';
 import { processLUTJob } from '../services/simpleJobProcessor.js';
 import { webhookLogger as logger } from '../logger.js';
 import { LUTJobRequestSchema } from '../types/jobs.js';
-import { config } from '../config.js';
+import { config, LUT_STORAGE_DIR } from '../config.js';
 import { frameioService } from '../services/frameioService.js';
 import { getEventWebhookSecret } from '../services/webhookLifecycle.js';
 
@@ -164,7 +164,7 @@ const EventPayloadSchema = z.object({
   workspace: z.object({ id: z.string().uuid() }),
 });
 
-const LUT_DOWNLOAD_DIR = join(process.cwd(), 'luts');
+const LUT_DOWNLOAD_DIR = LUT_STORAGE_DIR;
 const SYNC_MAP_PATH = join(LUT_DOWNLOAD_DIR, '.frameio-sync.json');
 const SAFE_FILENAME_RE = /^[A-Za-z0-9_\-. ]+\.cube$/;
 
