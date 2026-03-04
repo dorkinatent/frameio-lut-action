@@ -134,10 +134,9 @@ export async function deregisterEventWebhook(): Promise<void> {
     const state: WebhookState = JSON.parse(await readFile(STATE_PATH, 'utf-8'));
     await frameioService.deleteWebhook(state.accountId, state.webhookId);
     logger.info({ webhookId: state.webhookId }, 'Deleted event webhook');
-  } catch (err) {
-    logger.warn({ err }, 'Failed to delete event webhook (will be cleaned up on next start)');
-  } finally {
     webhookSecret = null;
     await unlink(STATE_PATH).catch(() => {});
+  } catch (err) {
+    logger.warn({ err }, 'Failed to delete event webhook (will be cleaned up on next start)');
   }
 }

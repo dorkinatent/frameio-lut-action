@@ -419,11 +419,16 @@ export class LUTService {
 
         // If the source file changed content, remove the stale entry for this path
         // so we don't accumulate active duplicates for the same source file.
+        const staleIds: string[] = [];
         for (const [id, existing] of this.luts) {
           if (existing.metadata?.originalPath === filePath && !existing.deletedAt) {
-            logger.info({ lutId: id, name: existing.name }, 'Source file changed, replacing stale LUT');
-            await this.deleteLUT(id, true);
+            staleIds.push(id);
           }
+        }
+        for (const id of staleIds) {
+          const existing = this.luts.get(id);
+          logger.info({ lutId: id, name: existing?.name }, 'Source file changed, replacing stale LUT');
+          await this.deleteLUT(id, true);
         }
 
         const lut = await this.createLUT(fileBuffer, {

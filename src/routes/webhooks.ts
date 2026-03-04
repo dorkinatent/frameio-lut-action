@@ -238,13 +238,19 @@ function verifyEventSignature(req: SignedRequest, res: Response, next: NextFunct
       ? req.body
       : JSON.stringify(req.body);
 
+  if (!signature.startsWith('v0=')) {
+    logger.warn('Invalid event webhook signature: bad prefix');
+    res.status(401).json({ error: 'Invalid signature' });
+    return;
+  }
+
   const expected = createHmac('sha256', secret)
     .update(`v0:${timestamp}:${body}`)
     .digest('hex');
 
-  const [, provided] = (signature || '').split('=');
+  const provided = signature.slice(3);
   const a = Buffer.from(expected);
-  const b = Buffer.from(provided || '');
+  const b = Buffer.from(provided);
 
   if (a.length !== b.length || !timingSafeEqual(a, b)) {
     logger.warn('Invalid event webhook signature');
@@ -368,16 +374,19 @@ async function handleFileDeleted(fileId: string, res: Response) {
         delete map[fileId];
       } else {
         const localPath = join(LUT_DOWNLOAD_DIR, safeName);
-        if (existsSync(localPath)) {
+        if (!existsSync(localPath)) {
+          removedName = safeName;
+          delete map[fileId];
+        } else {
           try {
             await unlink(localPath);
             logger.info({ name: safeName, localPath }, 'Removed local LUT (deleted from Frame.io)');
+            removedName = safeName;
+            delete map[fileId];
           } catch (err) {
-            logger.warn({ localPath, err }, 'Failed to remove local LUT file');
+            logger.warn({ localPath, err }, 'Failed to remove local LUT file, keeping sync map entry');
           }
         }
-        removedName = safeName;
-        delete map[fileId];
       }
       await saveSyncMap(map);
     }
